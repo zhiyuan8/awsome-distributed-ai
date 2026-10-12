@@ -83,7 +83,8 @@ class TaskEnv:
         self.task = task
         self.pristine = f"{tasks_root}/{task['id']}/repo"
         os.makedirs(work_root, exist_ok=True)
-        self.dir = f"{os.path.realpath(work_root)}/{task['id']}"  # realpath: /tmp may be a symlink
+        self.dir = os.path.realpath(f"{work_root}/{task['id']}")  # realpath: /tmp may be a symlink
+        self.dir_posix = self.dir.replace("\\", "/")
         shutil.rmtree(self.dir, ignore_errors=True)
         shutil.copytree(self.pristine, self.dir)
         self.bin = shim_bin(work_root)
@@ -109,10 +110,13 @@ class TaskEnv:
                 os.chown(os.path.join(root, f), self.uid, self.uid)
 
     def to_real(self, s):
-        return s.replace(VIRTUAL, self.dir)
+        return s.replace(VIRTUAL, self.dir_posix)
 
     def to_virtual(self, s):
-        return s.replace(self.dir, VIRTUAL)
+        s = s.replace(self.dir, VIRTUAL).replace(self.dir_posix, VIRTUAL)
+        if os.name == "nt" and self.dir_posix[1:3] == ":/":
+            s = s.replace("/" + self.dir_posix[0].lower() + self.dir_posix[2:], VIRTUAL)
+        return s
 
     def _resolve(self, path):
         if not isinstance(path, str) or not path.startswith("/"):

@@ -51,7 +51,14 @@ the public HumanEval dataset using this repo's own bug-injection code.
 `agent_env.py`'s `TaskEnv` drops bash commands to an unprivileged uid (`os.geteuid`/`os.chown`/
 `os.killpg`) as a Linux-pod hardening measure. These calls don't exist on Windows; the sandbox now
 guards them (`os.name == "posix"`) and simply skips the uid-drop there — fine for a local
-single-user run. `bash` itself runs via Git Bash on `PATH`.
+single-user run. `bash` itself runs via Git Bash on `PATH`. Sandbox paths are also normalized so
+`/testbed` maps consistently regardless of `/` vs `\` separators.
+
+Running on Windows:
+- set `PYTHONUTF8=1` (HumanEval sources contain non-cp1252 characters)
+- `--mode inject`/`paste` still read `<--tasks>/tasks.jsonl` and `humaneval.jsonl`; for a
+  standalone run create an empty `tasks.jsonl` and a `humaneval.jsonl` converted from the public
+  `HumanEval.jsonl.gz` (fields: `task_id, entry_point, prompt, canonical_solution, test`)
 
 ## Status
 
