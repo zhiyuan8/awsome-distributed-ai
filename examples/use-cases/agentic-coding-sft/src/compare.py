@@ -15,8 +15,11 @@ Modes (interactive menu by default):
   3  Inject a bug         pick a HumanEval function and a bug type; we break it, models fix it
   4  Quick scoreboard     N tasks from the eval set, % fixed per model
 
-Runs on a GPU node in the vLLM image (see kubernetes/compare.yaml-template). One vLLM engine
-serves the base model and both LoRA adapters at once.
+Backends (--backend):
+  vllm (default)   base model + LoRA adapters served by one vLLM engine (original; GPU node,
+                   see kubernetes/compare.yaml-template)
+  geniex           base and/or fully fine-tuned+quantized GGUF, loaded in-process via GenieX
+                   (pip install geniex), one model at a time (--geniex-base/--geniex-full)
 """
 import warnings
 
@@ -112,6 +115,9 @@ class Engine:
         return self.tok.apply_chat_template(conv, tools=TOOLS, tokenize=False,
                                             add_generation_prompt=True, enable_thinking=False)
 
+    def count_tokens(self, p):
+        return len(self.tok(p, add_special_tokens=False)["input_ids"])
+
     def generate(self, prompts, seeds, loras):
         sps = [self.SamplingParams(temperature=self.a.temperature, top_p=0.8, top_k=20,
                                    max_tokens=self.a.max_tokens, seed=s,
@@ -120,6 +126,46 @@ class Engine:
             loras = None
         outs = self.llm.generate(prompts, sps, lora_request=loras, use_tqdm=False)
         return [(o.outputs[0].text, len(o.outputs[0].token_ids)) for o in outs]
+
+
+# ----------------------------------------------------------------------------- geniex engine
+class GenieXEngine:
+    """Same contract as Engine (models/render/generate/count_tokens), backed by GenieX's
+    in-process llama_cpp runtime instead of vLLM. `base`/`full` are two independent merged GGUF
+    models (GenieX has no vLLM-style multi-LoRA-on-one-engine support), loaded in-process via
+    `pip install geniex` (ARM64 Windows/Linux only). Keyed "base"/"full" to reuse TITLES/COLORS/
+    SHOWCASE as-is: our "full" is literally the full fine-tune, just already merged+quantized.
+    """
+    def __init__(self, a):
+        from geniex import AutoModelForCausalLM
+        self.a = a
+        self.models = {}
+        with con.status(f"Loading base GGUF: {a.geniex_base}"):
+            self.models["base"] = AutoModelForCausalLM.from_pretrained(
+                a.geniex_base, device_map="llama_cpp")
+        if a.geniex_full:
+            with con.status(f"Loading fine-tuned GGUF: {a.geniex_full}"):
+                self.models["full"] = AutoModelForCausalLM.from_pretrained(
+                    a.geniex_full, device_map="llama_cpp")
+
+    def render(self, conv):
+        # base and the full fine-tune share the same Qwen3 tokenizer/template; render against
+        # "base" for both, the same assumption Engine.render makes for base + LoRA adapters.
+        return self.models["base"].tokenizer.apply_chat_template(
+            conv, tools=TOOLS, tokenize=False, add_generation_prompt=True, enable_thinking=False)
+
+    def count_tokens(self, p):
+        # GenieX's Python binding has no standalone tokenize() call; conservative overestimate
+        # (chars/3) used only for the context-budget check in run().
+        return len(p) // 3
+
+    def generate(self, prompts, seeds, models):
+        outs = []
+        for p, s, model in zip(prompts, seeds, models):
+            out = model.generate(p, max_new_tokens=self.a.max_tokens,
+                                 temperature=self.a.temperature, top_p=0.8, top_k=20, seed=s)
+            outs.append((out.text, out.profile.generated_tokens))
+        return outs
 
 
 # ----------------------------------------------------------------------------- agent loop
@@ -140,8 +186,7 @@ def run(engine, jobs, max_turns, label=""):
         prompts, idx = [], []
         for i in active:
             p = engine.render(eps[i]["conv"])
-            if len(engine.tok(p, add_special_tokens=False)["input_ids"]) + engine.a.max_tokens \
-                    > engine.a.max_model_len:
+            if engine.count_tokens(p) + engine.a.max_tokens > engine.a.max_model_len:
                 eps[i]["ended"] = "context_full"
                 continue
             prompts.append(p)
@@ -501,6 +546,15 @@ def main():
     ap.add_argument("--full", default=os.environ.get(
         "FULL_ADAPTER", f"{ROOT}/runs/agentic-full/adapter"),
         help="pre-trained full fine-tune adapter dir; pass --full '' for base vs yours only")
+    ap.add_argument("--backend", choices=["vllm", "geniex"], default="vllm",
+                    help="inference backend: vLLM+LoRA (original) or GenieX in-process "
+                         "llama_cpp over a merged+quantized GGUF")
+    ap.add_argument("--geniex-base", default=os.environ.get("GENIEX_BASE", ""),
+                    help="local .gguf path (or geniex model id) for the base model "
+                         "(--backend geniex)")
+    ap.add_argument("--geniex-full", default=os.environ.get("GENIEX_FULL", ""),
+                    help="local .gguf path (or geniex model id) for the full fine-tune "
+                         "(--backend geniex); omit for base-only")
     ap.add_argument("--scenarios", default="",
                     help="comma-separated task ids (default: 3-way or 2-way showcase set)")
     ap.add_argument("--tasks", default=TASKS_ROOT, help="agent task dir (tasks.jsonl, humaneval.jsonl)")
@@ -517,7 +571,7 @@ def main():
     a = ap.parse_args()
     TASKS_ROOT = a.tasks
 
-    engine = Engine(a)
+    engine = (GenieXEngine if a.backend == "geniex" else Engine)(a)
     default = SHOWCASE if "full" in engine.models else SHOWCASE_2WAY
     a.scenarios = [s.strip() for s in (a.scenarios or ",".join(default)).split(",") if s.strip()]
     con.print(f"Comparing: " + ", ".join(f"[{COLORS[m]}]{TITLES[m]}[/]" for m in engine.models))

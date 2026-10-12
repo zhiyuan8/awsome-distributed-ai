@@ -13,6 +13,10 @@ SECURITY: commands come from the model. `bash` runs as an unprivileged uid (defa
 nobody) in a new process group with a timeout, inside a disposable pod; the editor refuses paths
 outside the task dir. That keeps a stray `rm -rf` away from mounted volumes (owned by root), but
 it is not a hardened sandbox (no network isolation).
+
+Uid-dropping and process-group signals below are POSIX-only (`os.geteuid`/`os.chown`/`os.killpg`
+don't exist on Windows); on Windows this just runs as the current user with no uid drop, which is
+fine for a local single-user run.
 """
 import json
 import os
@@ -67,7 +71,10 @@ def shim_bin(work_root):
     for name in ("python", "python3"):
         p = f"{d}/{name}"
         if not os.path.exists(p):
-            os.symlink(sys.executable, p)
+            try:
+                os.symlink(sys.executable, p)
+            except OSError:
+                pass  # Windows: symlink needs elevation/dev-mode; bash resolves python via PATH
     return d
 
 
@@ -84,7 +91,8 @@ class TaskEnv:
         subprocess.run(["bash", "-c", "git init -q && git add -A && git -c user.name=dev "
                         "-c user.email=dev@example.com commit -qm init"], cwd=self.dir,
                        capture_output=True)
-        self.uid = uid if (uid is not None and uid >= 0 and os.geteuid() == 0) else None
+        self.uid = uid if (uid is not None and uid >= 0 and os.name == "posix"
+                           and os.geteuid() == 0) else None
         self._own(self.dir)
         self.undo = {}
         self.stats = {"bash": 0, "view": 0, "create": 0, "str_replace": 0, "insert": 0,
@@ -145,13 +153,20 @@ class TaskEnv:
                "GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "safe.directory",
                "GIT_CONFIG_VALUE_0": "*"}
         kw = {"user": self.uid, "group": self.uid} if self.uid is not None else {}
+        if os.name == "posix":
+            popen_kw = {"start_new_session": True}
+        else:
+            popen_kw = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
         p = subprocess.Popen(["bash", "-c", self.to_real(cmd)], cwd=self.dir, env=env,
                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                             stdin=subprocess.DEVNULL, start_new_session=True, **kw)
+                             stdin=subprocess.DEVNULL, **popen_kw, **kw)
         try:
             out, _ = p.communicate(timeout=BASH_TIMEOUT)
         except subprocess.TimeoutExpired:
-            os.killpg(p.pid, signal.SIGKILL)
+            if os.name == "posix":
+                os.killpg(p.pid, signal.SIGKILL)
+            else:
+                p.kill()
             p.communicate()
             return f"The command took too long to execute (>{BASH_TIMEOUT}s) and was killed."
         out = out.decode(errors="replace").strip()

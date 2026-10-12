@@ -14,3 +14,6 @@ nvidia-ml-py==13.580.82
 # (imported lazily in train_agent.py, so the core pipeline runs without these).
 mlflow==3.5.1
 sagemaker-mlflow==0.1.1
+# Optional: only needed for `compare.py --backend geniex` (ARM64 Windows/Linux GGUF runtime,
+# imported lazily, so the vLLM pipeline runs without it).
+geniex
