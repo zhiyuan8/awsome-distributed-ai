@@ -64,6 +64,16 @@ def truncate(s):
             + s[-half:])
 
 
+def rmtree(path):
+    def force(func, p, _exc):
+        try:
+            os.chmod(p, 0o700)
+            func(p)
+        except OSError:
+            pass  # Windows: git objects are read-only
+    shutil.rmtree(path, onerror=force)
+
+
 def shim_bin(work_root):
     """A bin dir with `python` -> this interpreter (some images only ship `python3`)."""
     d = f"{work_root}/.bin"
@@ -85,7 +95,7 @@ class TaskEnv:
         os.makedirs(work_root, exist_ok=True)
         self.dir = os.path.realpath(f"{work_root}/{task['id']}")  # realpath: /tmp may be a symlink
         self.dir_posix = self.dir.replace("\\", "/")
-        shutil.rmtree(self.dir, ignore_errors=True)
+        rmtree(self.dir)
         shutil.copytree(self.pristine, self.dir)
         self.bin = shim_bin(work_root)
         # A VS Code workspace is normally a git repo, and the training traces use git.
@@ -293,9 +303,9 @@ class TaskEnv:
     def grade(self, timeout=20):
         """Copy the final repo, restore pristine tests, run every test file directly."""
         g = self.dir + ".grade"
-        shutil.rmtree(g, ignore_errors=True)
+        rmtree(g)
         shutil.copytree(self.dir, g, ignore=shutil.ignore_patterns("__pycache__", ".git"))
-        shutil.rmtree(f"{g}/tests", ignore_errors=True)
+        rmtree(f"{g}/tests")
         shutil.copytree(f"{self.pristine}/tests", f"{g}/tests")
         self._own(g)
         kw = {"user": self.uid, "group": self.uid} if self.uid is not None else {}
@@ -308,7 +318,7 @@ class TaskEnv:
                 res[n] = r.returncode == 0
             except subprocess.TimeoutExpired:
                 res[n] = False
-        shutil.rmtree(g, ignore_errors=True)
+        rmtree(g)
         target = self.task["entry_point"]
 
         def _read(p):
