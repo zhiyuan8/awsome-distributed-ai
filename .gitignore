@@ -120,6 +120,11 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+# Local GenieX venv (demo/ and examples/use-cases/agentic-coding-sft/)
+geniex-env/
+# Local GGUF weights (over GitHub's file size limit)
+demo/r64/
+demo/v2-epoch2/
 
 # User-specific environment variables (keep .example files)
 **/env_vars
@@ -172,3 +177,8 @@ micro-benchmarks/nccl-tests/slurm/topology-aware-nccl-tests/debug_topology.json
 # Kiro IDE
 .kiro/
 models/
+
+
+# weight path
+demo/r64
+demo/v2-epoch2

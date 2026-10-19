@@ -74,6 +74,18 @@ def rmtree(path):
     shutil.rmtree(path, onerror=force)
 
 
+def bash_exe():
+    """Absolute Git for Windows bash. CreateProcess checks System32 before PATH,
+    so an unqualified `bash` is WSL's bash.exe whenever that feature is installed."""
+    if os.name != "nt":
+        return "bash"
+    candidate = os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"),
+                             "Git", "bin", "bash.exe")
+    if os.path.isfile(candidate):
+        return candidate
+    return shutil.which("bash") or "bash"
+
+
 def shim_bin(work_root):
     """A bin dir with `python` -> this interpreter (some images only ship `python3`)."""
     d = f"{work_root}/.bin"
@@ -99,7 +111,7 @@ class TaskEnv:
         shutil.copytree(self.pristine, self.dir)
         self.bin = shim_bin(work_root)
         # A VS Code workspace is normally a git repo, and the training traces use git.
-        subprocess.run(["bash", "-c", "git init -q && git add -A && git -c user.name=dev "
+        subprocess.run([bash_exe(), "-c", "git init -q && git add -A && git -c user.name=dev "
                         "-c user.email=dev@example.com commit -qm init"], cwd=self.dir,
                        capture_output=True)
         self.uid = uid if (uid is not None and uid >= 0 and os.name == "posix"
@@ -171,7 +183,7 @@ class TaskEnv:
             popen_kw = {"start_new_session": True}
         else:
             popen_kw = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
-        p = subprocess.Popen(["bash", "-c", self.to_real(cmd)], cwd=self.dir, env=env,
+        p = subprocess.Popen([bash_exe(), "-c", self.to_real(cmd)], cwd=self.dir, env=env,
                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                              stdin=subprocess.DEVNULL, **popen_kw, **kw)
         try:

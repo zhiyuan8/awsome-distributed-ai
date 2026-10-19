@@ -180,6 +180,11 @@ class GenieXEngine:
     def generate(self, prompts, seeds, models):
         outs = []
         for p, s, model in zip(prompts, seeds, models):
+            # Qwen3.5 GGUF is a VLM. The next agent turn is not a prefix of the
+            # previous prompt, and geniex_vlm_generate then fails with
+            # "VLM prefix reuse failed" (-201202). Drop the KV cache first.
+            if hasattr(model, "reset"):
+                model.reset()
             out = model.generate(p, max_new_tokens=self.a.max_tokens,
                                  temperature=self.a.temperature, top_p=0.8, top_k=20, seed=s)
             outs.append((out.text, out.profile.generated_tokens))
