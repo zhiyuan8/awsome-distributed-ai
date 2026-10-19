@@ -128,6 +128,23 @@ class Engine:
         return [(o.outputs[0].text, len(o.outputs[0].token_ids)) for o in outs]
 
 
+def _jsonify_tool_args(conv):
+    """`step()` stores `tool_calls[].function.arguments` as a parsed dict, which vLLM's Jinja
+    template re-encodes itself (`| tojson`). GenieX's chat template instead calls `.encode()`
+    on `arguments` directly, so it needs a JSON string here; re-encode a copy, leaving the
+    shared `conv` (and the vLLM path) untouched."""
+    out = []
+    for m in conv:
+        if not m.get("tool_calls"):
+            out.append(m)
+            continue
+        tcs = [{**tc, "function": {**tc["function"],
+                                   "arguments": json.dumps(tc["function"]["arguments"])}}
+              for tc in m["tool_calls"]]
+        out.append({**m, "tool_calls": tcs})
+    return out
+
+
 # ----------------------------------------------------------------------------- geniex engine
 class GenieXEngine:
     """Same contract as Engine (models/render/generate/count_tokens), backed by GenieX's
@@ -142,17 +159,18 @@ class GenieXEngine:
         self.models = {}
         with con.status(f"Loading base GGUF: {a.geniex_base}"):
             self.models["base"] = AutoModelForCausalLM.from_pretrained(
-                a.geniex_base, device_map="llama_cpp")
+                a.geniex_base, device_map=a.geniex_device_map)
         if a.geniex_full:
             with con.status(f"Loading fine-tuned GGUF: {a.geniex_full}"):
                 self.models["full"] = AutoModelForCausalLM.from_pretrained(
-                    a.geniex_full, device_map="llama_cpp")
+                    a.geniex_full, device_map=a.geniex_device_map)
 
     def render(self, conv):
         # base and the full fine-tune share the same Qwen3 tokenizer/template; render against
         # "base" for both, the same assumption Engine.render makes for base + LoRA adapters.
         return self.models["base"].tokenizer.apply_chat_template(
-            conv, tools=TOOLS, tokenize=False, add_generation_prompt=True, enable_thinking=False)
+            _jsonify_tool_args(conv), tools=TOOLS, tokenize=False, add_generation_prompt=True,
+            enable_thinking=False)
 
     def count_tokens(self, p):
         # GenieX's Python binding has no standalone tokenize() call; conservative overestimate
@@ -398,10 +416,10 @@ def read_block(prompt):
 
 
 # ----------------------------------------------------------------------------- modes
-def compare_task(engine, a, task, root, title, subtitle=""):
+def compare_task(engine, a, task, root, title, subtitle="", max_turns=None):
     jobs = [{"model": m, "task": task, "tasks_root": root, "seed": seed_for(task["id"])}
             for m in engine.models]
-    eps = run(engine, jobs, a.max_turns, label=task["entry_point"])
+    eps = run(engine, jobs, max_turns or a.max_turns, label=task["entry_point"])
     show(title, eps, subtitle)
     save(eps, a, task["id"])
     return eps
@@ -452,7 +470,7 @@ def mode_paste(engine, a):
 
 def mode_inject(engine, a):
     he = humaneval()
-    name = input("HumanEval function name (Enter for a random one): ").strip()
+    name = input("HumanEval function name (Enter for default: monotonic): ").strip() or "monotonic"
     if not name:
         name = random.choice([n for n in he if sites(target_fn(ast.parse(
             he[n]["prompt"] + he[n]["canonical_solution"]), n))])
@@ -466,7 +484,8 @@ def mode_inject(engine, a):
     if not kinds:
         con.print("[red]No place to inject a bug in this function, pick another.[/red]")
         return
-    kind = input(f"Bug type {kinds} (Enter for random): ").strip() or random.choice(kinds)
+    default_kind = "boolean" if "boolean" in kinds else kinds[0]
+    kind = input(f"Bug type {kinds} (Enter for default: {default_kind}): ").strip() or default_kind
     if kind not in kinds:
         con.print(f"[red]Pick one of {kinds}[/red]")
         return
@@ -486,8 +505,10 @@ def mode_inject(engine, a):
                                        buggy.splitlines(True), "correct", "buggy", n=0))
     con.print(Panel(escape("\n".join(l for l in bug.splitlines() if not l.startswith(("---", "+++")))),
                     title=f"Injected bug in {name} (the models don't see this)", expand=False))
+    rounds = input("Number of rounds (Enter for default: 1): ").strip()
+    max_turns = int(rounds) if rounds else 1
     task, root = build_task(f"inject_{name}_{kind}", name, buggy, test_file(name, r["test"]))
-    compare_task(engine, a, task, root, f"Injected {kind} bug: fix `{name}`")
+    compare_task(engine, a, task, root, f"Injected {kind} bug: fix `{name}`", max_turns=max_turns)
 
 
 def mode_quick(engine, a):
@@ -555,6 +576,11 @@ def main():
     ap.add_argument("--geniex-full", default=os.environ.get("GENIEX_FULL", ""),
                     help="local .gguf path (or geniex model id) for the full fine-tune "
                          "(--backend geniex); omit for base-only")
+    ap.add_argument("--geniex-device-map", default=os.environ.get("GENIEX_DEVICE_MAP", "llama_cpp"),
+                    help="GenieX device_map (--backend geniex). Default 'llama_cpp' lets the SDK "
+                         "auto-pick a compute unit, which can select the Hexagon NPU (HTP0) and "
+                         "crash with 'cannot run the operation(ROPE)' on GGUF models whose KV-cache "
+                         "ops aren't supported there; pass 'llama_cpp:cpu' to force CPU instead")
     ap.add_argument("--scenarios", default="",
                     help="comma-separated task ids (default: 3-way or 2-way showcase set)")
     ap.add_argument("--tasks", default=TASKS_ROOT, help="agent task dir (tasks.jsonl, humaneval.jsonl)")

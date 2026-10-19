@@ -171,3 +171,4 @@ micro-benchmarks/nccl-tests/slurm/topology-aware-nccl-tests/debug_topology.json
 
 # Kiro IDE
 .kiro/
+models/

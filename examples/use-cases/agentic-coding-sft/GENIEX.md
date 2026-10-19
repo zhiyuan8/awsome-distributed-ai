@@ -24,14 +24,44 @@ contract as the existing `Engine`.
 
 ## Usage
 
-```bash
-pip install geniex   # ARM64 Windows / Linux ARM64 only
+GenieX only runs on ARM64 Windows / Linux ARM64. Set up a dedicated venv (PowerShell):
 
-python compare.py --backend geniex \
-  --geniex-base /path/to/base-Q8_0.gguf \
-  --geniex-full /path/to/finetuned-Q8_0.gguf \
+```powershell
+python -m venv geniex-env
+.\geniex-env\Scripts\Activate.ps1
+pip install -r src\requirements.txt
+```
+
+`src/requirements.txt` pulls in `geniex`, `transformers`, and `rich` (the table display
+`compare.py` uses for both backends) — installing `geniex` on its own is not enough, you'll hit
+`ModuleNotFoundError: No module named 'rich'` partway through model loading.
+
+Then, from `src/`:
+
+```powershell
+python compare.py --backend geniex `
+  --geniex-base 'local/agent-v2-epoch2' `
+  --geniex-full 'unsloth/Qwen3.5-2B-GGUF' `
   --mode inject
 ```
+
+(PowerShell's line-continuation character is the backtick `` ` ``, not `\` — a trailing `\` is
+parsed as a new statement and fails with `Missing expression after unary operator '--'`. A single
+line works too, with no continuation characters needed.)
+
+`--geniex-base`/`--geniex-full` also accept a name registered in the GenieX cache
+(`~/.cache/geniex/models`) instead of a raw path — handy for reusing the same model across runs
+without retyping the path. Register with the CLI's `localfs` hub, one `.gguf` per directory
+(`--local-path` ingests every file in the directory, so two `.gguf`s side by side would both get
+copied into each pull as a redundant "extra file"):
+
+```powershell
+geniex pull local/agent-r64 --model-hub localfs --local-path 'C:\path\to\models\r64'
+geniex pull local/agent-v2-epoch2 --model-hub localfs --local-path 'C:\path\to\models\v2-epoch2'
+```
+
+then pass `--geniex-base local/agent-r64 --geniex-full local/agent-v2-epoch2` instead of the raw
+paths above — resolved straight from the cache, no hub lookup.
 
 Omit `--geniex-full` to compare the base model against itself (useful as a smoke test) or to run
 single-model modes. `--mode inject`/`paste` work out of the box (they build tasks on the fly from
@@ -60,11 +90,21 @@ Running on Windows:
   standalone run create an empty `tasks.jsonl` and a `humaneval.jsonl` converted from the public
   `HumanEval.jsonl.gz` (fields: `task_id, entry_point, prompt, canonical_solution, test`)
 
+## Known issue: tool-call arguments must be a JSON string, not a dict
+
+`step()` in `compare.py` stores each assistant turn's `tool_calls[].function.arguments` as a
+parsed dict (vLLM's Jinja chat template re-encodes it itself via `| tojson`). GenieX's chat
+template binding instead calls `.encode()` on `arguments` directly, so passing a dict crashes
+with `AttributeError: 'dict' object has no attribute 'encode'` on the second agent turn (the
+first turn has no prior tool call yet, so it isn't caught until the model calls a tool once).
+`GenieXEngine.render` now re-encodes a copy of the conversation's `arguments` to a JSON string
+before calling `apply_chat_template`, leaving the shared `conv` (and the vLLM path) untouched.
+
 ## Status
 
 - Code change: done (`src/compare.py` `GenieXEngine` + `--backend geniex`; `src/agent_env.py`
-  Windows guards).
-- Mechanism smoke test (base GGUF loaded twice, `--mode inject`, confirms tools-aware rendering +
-  `<tool_call>` parsing + sandboxed grading work end to end): see test evidence in the PR/commit
-  this file ships with.
+  Windows guards; tool-call argument encoding fix above).
+- Mechanism smoke test (base GGUF loaded twice, `--mode inject` on `monotonic`/`boolean`):
+  completed end to end in 6 turns — viewed the file, edited it, ran `pytest`, submitted, bug
+  fixed.
 - Real base-vs-fine-tune comparison: pending the actual GGUF files from the training run.
