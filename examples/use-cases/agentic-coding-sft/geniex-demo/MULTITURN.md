@@ -6,38 +6,64 @@ Requires ARM64 Windows or Linux, the GenieX Python SDK, Git Bash on `PATH` (Wind
 
 ## 1. Set up
 
-From `examples/use-cases/agentic-coding-sft/`:
+From `examples/use-cases/agentic-coding-sft/geniex-demo` (this directory). The venv lives next to `src/`, one level up. `src/requirements.txt` also pulls PyTorch, which has no Windows ARM64 wheel, so install the packages this demo imports:
 
 ```powershell
+cd ..
 python -m venv geniex-env
 .\geniex-env\Scripts\Activate.ps1
-pip install -r src\requirements.txt
-geniex pull Qwen/Qwen3-1.7B-GGUF:Q8_0
+pip install "geniex==0.9.1" "transformers==4.57.1" rich human-eval pytest
+cd geniex-demo
+geniex pull unsloth/Qwen3-1.7B-GGUF:Q8_0
+hf download zackliqcom/aws-qualcomm-demo --include "v2-epoch2/*" --local-dir models
 ```
 
-Build `tasks_root/` (next to `src/`) from public HumanEval:
+Build `tasks_root/` next to `src/` from public HumanEval. `Join-Path` keeps the filename `tasks.jsonl`; a literal `tasks_root\tasks.jsonl` in some pastes becomes a tab plus `asks.jsonl`.
 
 ```powershell
-mkdir tasks_root
-New-Item tasks_root	asks.jsonl -ItemType File
-python -c "import gzip,json,urllib.request as u; d=gzip.decompress(u.urlopen('https://github.com/openai/human-eval/raw/master/data/HumanEval.jsonl.gz').read()).decode(); open('tasks_root/humaneval.jsonl','w',encoding='utf-8').writelines(json.dumps({k:r[k] for k in ('task_id','entry_point','prompt','canonical_solution','test')})+'
-' for r in map(json.loads,d.splitlines()))"
+New-Item -ItemType Directory -Force -Path ..\tasks_root | Out-Null
+New-Item -ItemType File -Force -Path (Join-Path ..\tasks_root tasks.jsonl) | Out-Null
+python -c @"
+import gzip, json, human_eval, os
+src = os.path.join(os.path.dirname(human_eval.__file__), 'data', 'HumanEval.jsonl.gz')
+dst = os.path.join('..', 'tasks_root', 'humaneval.jsonl')
+with gzip.open(src, 'rt', encoding='utf-8') as f, open(dst, 'w', encoding='utf-8') as out:
+    for line in f:
+        r = json.loads(line)
+        out.write(json.dumps({k: r[k] for k in ('task_id', 'entry_point', 'prompt', 'canonical_solution', 'test')}) + '\n')
+print('wrote', sum(1 for _ in open(dst, encoding='utf-8')), 'tasks')
+"@
 ```
 
 ## 2. Run
 
-```powershell
-$env:PATH = "C:\Program Files\Git\bin;$env:PATH"
-$env:PYTHONUTF8 = 1
-$env:GENIEX_BASE = 'C:/Users/<you>/.cache/geniex/models/Qwen/Qwen3-1.7B-GGUF/Qwen3-1.7B-Q8_0.gguf'
-$env:GENIEX_FULL = 'C:/path/to/agent-1p7b-16k-v2-epoch2-q8_0.gguf'
-cd src
+Still in `geniex-demo`. Answers go through a file, not a PowerShell pipe: `compare.py` prints the injected diff before reading the round count, and a pipe deadlocks there. `llama_cpp:cpu` avoids the Hexagon NPU `ROPE` crash.
 
-"fib`n`n20`n" | python -c 'import random,runpy,sys; random.seed(7); sys.argv=["compare.py","--backend","geniex","--mode","inject","--tasks","../tasks_root","--out","../compare_out/demo_fib"]; runpy.run_path("compare.py",run_name="__main__")'
+```powershell
+$env:PATH = "..\geniex-env\Scripts;C:\Program Files\Git\bin;$env:PATH"
+$env:PYTHONUTF8 = "1"
+$env:GENIEX_DEVICE_MAP = "llama_cpp:cpu"
+$env:GENIEX_BASE = (Join-Path $env:USERPROFILE ".cache\geniex\models\unsloth\Qwen3-1.7B-GGUF\Qwen3-1.7B-Q8_0.gguf") -replace '\\','/'
+$env:GENIEX_FULL = (Resolve-Path "models\v2-epoch2\agent-1p7b-16k-v2-epoch2-q8_0.gguf").Path -replace '\\','/'
+@'
+fib
+
+20
+'@ | Set-Content -Encoding ascii answers.txt
+@'
+import os, random, runpy, sys
+random.seed(7)
+src = os.path.abspath(os.path.join(os.path.dirname(__file__) or ".", "..", "src"))
+sys.path.insert(0, src)
+sys.argv = ["compare.py", "--backend", "geniex", "--mode", "inject",
+            "--tasks", "../tasks_root", "--out", "../compare_out/demo_fib"]
+runpy.run_path(os.path.join(src, "compare.py"), run_name="__main__")
+'@ | Set-Content -Encoding ascii run_fib.py
+cmd /c "..\geniex-env\Scripts\python.exe -u run_fib.py < answers.txt"
 ```
 
 - **Paths:** use forward slashes (`C:/...`). A backslash path or `/c/...` is treated as a model ID and GenieX tries to download it.
-- **`bash`:** the first line adds Git Bash to `PATH`; without it the sandbox fails with `FileNotFoundError`.
+- **`bash`:** Git Bash must be on `PATH`; without it the sandbox fails with `FileNotFoundError`.
 - **`random.seed(7)`:** fixes which bug is injected. Without it the bug varies between runs.
 
 The three input lines answer the prompts:
