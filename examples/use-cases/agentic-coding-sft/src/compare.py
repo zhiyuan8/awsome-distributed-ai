@@ -505,8 +505,8 @@ def mode_inject(engine, a):
                                        buggy.splitlines(True), "correct", "buggy", n=0))
     con.print(Panel(escape("\n".join(l for l in bug.splitlines() if not l.startswith(("---", "+++")))),
                     title=f"Injected bug in {name} (the models don't see this)", expand=False))
-    rounds = input("Number of rounds (Enter for default: 1): ").strip()
-    max_turns = int(rounds) if rounds else 1
+    rounds = input(f"Number of rounds (Enter for default: {a.max_turns}): ").strip()
+    max_turns = int(rounds) if rounds else a.max_turns
     task, root = build_task(f"inject_{name}_{kind}", name, buggy, test_file(name, r["test"]))
     compare_task(engine, a, task, root, f"Injected {kind} bug: fix `{name}`", max_turns=max_turns)
 

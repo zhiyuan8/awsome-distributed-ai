@@ -36,6 +36,29 @@ pip install -r src\requirements.txt
 `compare.py` uses for both backends) — installing `geniex` on its own is not enough, you'll hit
 `ModuleNotFoundError: No module named 'rich'` partway through model loading.
 
+`--mode inject`/`paste` read `humaneval.jsonl` from `$env:AGENT_TASKS` (default
+`/fsx/agent_tasks/v1`, which doesn't exist off the training cluster — without this you'll hit
+`FileNotFoundError: .../humaneval.jsonl`). Build a standalone copy from the public `human-eval`
+PyPI package (ships the same `HumanEval.jsonl.gz`; `tasks.jsonl` only needs to exist, `--mode
+inject`/`paste` build their own repos on the fly and don't read its contents):
+
+```powershell
+pip install human-eval
+$tasks = "$env:LOCALAPPDATA\geniex-compare-tasks"
+New-Item -ItemType Directory -Force -Path $tasks | Out-Null
+New-Item -ItemType File -Force -Path "$tasks\tasks.jsonl" | Out-Null
+python -c @"
+import gzip, json, human_eval, os
+src = os.path.join(os.path.dirname(human_eval.__file__), 'data', 'HumanEval.jsonl.gz')
+dst = os.path.join(r'$tasks', 'humaneval.jsonl')
+with gzip.open(src, 'rt', encoding='utf-8') as f, open(dst, 'w', encoding='utf-8') as out:
+    for line in f:
+        r = json.loads(line)
+        out.write(json.dumps({k: r[k] for k in ('task_id', 'entry_point', 'prompt', 'canonical_solution', 'test')}) + '\n')
+"@
+$env:AGENT_TASKS = $tasks
+```
+
 Then, from `src/`:
 
 ```powershell

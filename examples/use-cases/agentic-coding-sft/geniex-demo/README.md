@@ -1,4 +1,4 @@
-# GenieX demo: public Qwen3-1.7B vs fine-tuned `agent-v2`
+# GenieX demo: public Qwen3-1.7B vs fine-tuned `agent-v2-epoch2`
 
 Both models run on GenieX (`geniex serve`, llama.cpp backend). They get the same prompt and tools, and give different answers.
 
@@ -9,7 +9,7 @@ Requires ARM64 Windows or Linux, the GenieX CLI, Python 3.9+, and `agent-1p7b-16
 ```powershell
 mkdir models\v2
 copy C:\path\to\agent-1p7b-16k-v2-epoch2-q8_0.gguf models\v2\
-geniex pull local/agent-v2 --model-hub localfs --local-path models\v2
+geniex pull local/agent-v2-epoch2 --model-hub localfs --local-path models\v2
 geniex pull Qwen/Qwen3-1.7B-GGUF:Q8_0
 ```
 
@@ -26,8 +26,8 @@ geniex serve
 In a second terminal:
 
 ```powershell
-python ask.py Qwen/Qwen3-1.7B-GGUF:Q8_0
-python ask.py local/agent-v2:Q8_0
+python ask.py unsloth/Qwen3-1.7B-GGUF:Q8_0
+python ask.py local/agent-v2-epoch2:Q8_0
 ```
 
 `ask.py` sends one `/v1/chat/completions` request (temperature 0, thinking off):
@@ -46,7 +46,7 @@ The bug in [truncate_number.py](truncate_number.py): `return number // 1.0` retu
 == Qwen/Qwen3-1.7B-GGUF:Q8_0
 - return number // 1.0
 + return number / 1.0
-== local/agent-v2:Q8_0
+== local/agent-v2-epoch2:Q8_0
 - return number // 1.0
 + return number - (number // 1.0)
 ```
@@ -54,6 +54,6 @@ The bug in [truncate_number.py](truncate_number.py): `return number // 1.0` retu
 | Model | Result |
 |---|---|
 | Public Qwen3-1.7B | Wrong: `3.5 / 1.0 = 3.5`. Bug remains. |
-| agent-v2 | Fixed: `3.5 - 3.0 = 0.5`. |
+| agent-v2-epoch2 | Fixed: `3.5 - 3.0 = 0.5`. |
 
-The public model's wrong edit can vary between runs (e.g. it may leave the line unchanged); agent-v2's fix has been the same on every run.
+The public model's wrong edit can vary between runs (e.g. it may leave the line unchanged); agent-v2-epoch2's fix has been the same on every run.
