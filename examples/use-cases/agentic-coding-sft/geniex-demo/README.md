@@ -18,15 +18,12 @@ geniex pull Qwen/Qwen3-1.7B-GGUF:Q8_0
 ## 2. Start the server
 
 ```powershell
-$env:NO_PROXY = "127.0.0.1,localhost"
 geniex serve
 ```
 
-`NO_PROXY` is needed if an HTTP proxy is set; otherwise requests return 502.
-
 ## 3. Send the prompt to both models
 
-In a second terminal (also set `NO_PROXY`):
+In a second terminal:
 
 ```powershell
 python ask.py Qwen/Qwen3-1.7B-GGUF:Q8_0
