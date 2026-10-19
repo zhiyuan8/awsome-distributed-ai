@@ -1,5 +1,6 @@
 import json
 import base64
+import os
 import subprocess
 import urllib.parse
 
@@ -36,7 +37,11 @@ from ddgs import DDGS
 
 def web_search(query: str) -> list[dict]:
     url = "https://www.google.com/search?q=" + urllib.parse.quote_plus(query)
-    subprocess.Popen(["open", "-a", "Google Chrome", url])
+    # macOS `open -a` does not exist on Windows; start the default browser there.
+    if os.name == "nt":
+        os.startfile(url)
+    else:
+        subprocess.Popen(["open", "-a", "Google Chrome", url])
     return [
         {"title": r["title"], "snippet": r["body"], "url": r["href"]}
         for r in DDGS().text(query, max_results=3)
