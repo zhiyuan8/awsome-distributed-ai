@@ -43,7 +43,7 @@ def web_search(query: str) -> list[dict]:
     ]
 
 
-IMAGE_PATH = "/Users/zhiyuanl/Documents/cityview.jpg"
+IMAGE_PATH = "C:/Users/zhiyu/OneDrive/Desktop/qualcomm-code/demo/san-diego.jpg"
 
 with open(IMAGE_PATH, "rb") as f:
     IMAGE_BASE64 = base64.b64encode(f.read()).decode("utf-8")
